@@ -124,9 +124,9 @@ def build_label_image(
     full_w = w_px - mg * 2
     
     # Font sizes
-    fs_name = max(8, int(9 * dpi / 72))     # название
-    fs_body = max(7, int(7 * dpi / 72))     # артикул/поставщик  
-    fs_small = max(5, int(5 * dpi / 72))    # КИЗ
+    fs_name = max(6, int(7 * dpi / 72))     # название
+    fs_body = max(5, int(6 * dpi / 72))     # артикул/поставщик
+    fs_small = max(4, int(4 * dpi / 72))    # КИЗ
     
     font_name = get_font(fs_name, bold=True)
     font_body = get_font(fs_body, bold=False)
@@ -192,7 +192,7 @@ def build_label_image(
             img.paste(ean_img, (mg, y))
             y += ean_h + 2
             # Barcode digits
-            fs_dig = get_font(max(4, int(4 * dpi / 72)), bold=False)
+            fs_dig = get_font(max(3, int(3 * dpi / 72)), bold=False)
             txt_w, _ = _text_size(draw, digits, fs_dig)
             draw.text((mg + (full_w - txt_w) // 2, y), digits, fill="black", font=fs_dig)
         except Exception:
