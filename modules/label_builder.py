@@ -74,8 +74,8 @@ def build_label_image(
 ) -> Image.Image:
     """
     Layout (left to right):
-    LEFT:  DataMatrix (square, ~40% width)
-    RIGHT: Name (top), Article, Supplier, KIZ full text (wrapped), EAN-13 barcode (bottom)
+      LEFT:  DataMatrix (square, ~40% width)
+      RIGHT: Name (top), Article, Supplier, KIZ full text (wrapped), EAN-13 barcode (bottom)
     """
     w_mm, h_mm = LABEL_FORMATS.get(label_format, (58, 40))
     w_px = int(w_mm * dpi / 25.4)
@@ -87,7 +87,7 @@ def build_label_image(
     # Thin border
     draw.rectangle([0, 0, w_px - 1, h_px - 1], outline="black", width=1)
 
-    margin = max(3, int(1.5 * dpi / 25.4))
+    margin = max(3, int(1.5 * dpi / 25.4))  # ~1.5mm
 
     # --- DataMatrix zone (left side, square) ---
     dm_size = h_px - margin * 2
@@ -159,7 +159,9 @@ def build_label_image(
             # Print barcode number below
             draw.text(
                 (text_x + ean_w // 2 - len(digits) * fs_small // 4, ean_y + ean_h + 1),
-                digits, fill="black", font=font_small
+                digits,
+                fill="black",
+                font=font_small
             )
 
     return img
@@ -174,7 +176,8 @@ def build_pdf(labels_data: list, label_format: str = "58x40 mm (standard)", dpi:
         if not kiz:
             continue
         img = build_label_image(
-            kiz=kiz, label_format=label_format,
+            kiz=kiz,
+            label_format=label_format,
             article=str(item.get("article", "") or ""),
             name=str(item.get("name", "") or ""),
             supplier=str(item.get("supplier", "") or ""),
@@ -198,7 +201,8 @@ def build_pdf_a4(labels_data: list, label_format: str = "58x40 mm (standard)", d
     c = canvas.Canvas(buf, pagesize=A4)
     idx = 0
     while idx < len(labels_data):
-        for i, item in enumerate(labels_data[idx: idx + per_page]):
+        page_items = labels_data[idx: idx + per_page]
+        for i, item in enumerate(page_items):
             kiz = item.get("kiz", "")
             if not kiz:
                 continue
@@ -207,7 +211,8 @@ def build_pdf_a4(labels_data: list, label_format: str = "58x40 mm (standard)", d
             x = col * w_mm * mm
             y = a4_h - (row + 1) * h_mm * mm
             img = build_label_image(
-                kiz=kiz, label_format=label_format,
+                kiz=kiz,
+                label_format=label_format,
                 article=str(item.get("article", "") or ""),
                 name=str(item.get("name", "") or ""),
                 supplier=str(item.get("supplier", "") or ""),
