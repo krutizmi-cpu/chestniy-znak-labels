@@ -1,6 +1,5 @@
 import io
 import os
-import textwrap
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
@@ -20,7 +19,7 @@ LABEL_FORMATS = {
 
 
 def get_font(size_pt: int, bold: bool = False):
-    """Load a font that supports Cyrillic. Falls back to default."""
+    """Load a Cyrillic-capable font, fall back to default."""
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans{}.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-{}.ttf",
@@ -40,12 +39,18 @@ def get_font(size_pt: int, bold: bool = False):
                 return ImageFont.truetype(path, size_pt)
             except Exception:
                 pass
-    # Last resort: default bitmap font (no Cyrillic but won't crash)
     return ImageFont.load_default()
 
 
+def text_height(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[3] - bbox[1]
+
+
 def wrap_text(text: str, font, max_width_px: int, draw: ImageDraw.ImageDraw) -> list:
-    """Break text into lines that fit within max_width_px."""
+    """Break text into lines fitting max_width_px."""
+    if not text:
+        return []
     words = text.split()
     lines = []
     current = ""
@@ -73,9 +78,10 @@ def build_label_image(
     dpi: int = 203,
 ) -> Image.Image:
     """
-    Layout (left to right):
-      LEFT:  DataMatrix (square, ~40% width)
-      RIGHT: Name (top), Article, Supplier, KIZ full text (wrapped), EAN-13 barcode (bottom)
+    Layout:
+      LEFT  (~42%): DataMatrix QR
+      RIGHT (~58%): text block (name, article, supplier, KIZ) + EAN-13 at bottom
+    All text is auto-sized to fit within the available height.
     """
     w_mm, h_mm = LABEL_FORMATS.get(label_format, (58, 40))
     w_px = int(w_mm * dpi / 25.4)
@@ -83,86 +89,113 @@ def build_label_image(
 
     img = Image.new("RGB", (w_px, h_px), "white")
     draw = ImageDraw.Draw(img)
-
-    # Thin border
     draw.rectangle([0, 0, w_px - 1, h_px - 1], outline="black", width=1)
 
-    margin = max(3, int(1.5 * dpi / 25.4))  # ~1.5mm
+    margin = max(4, int(1.2 * dpi / 25.4))  # ~1.2 mm
 
-    # --- DataMatrix zone (left side, square) ---
-    dm_size = h_px - margin * 2
+    # --- DataMatrix: 42% of width, centered vertically ---
+    dm_size = min(h_px - margin * 2, int(w_px * 0.42) - margin)
+    dm_size = max(dm_size, 20)
     dm_module = max(2, dm_size // 22)
     dm_img = generate_datamatrix(kiz, size=dm_module)
     dm_img = dm_img.resize((dm_size, dm_size), Image.NEAREST)
     dm_x = margin
-    dm_y = margin
+    dm_y = (h_px - dm_size) // 2
     img.paste(dm_img, (dm_x, dm_y))
 
-    # --- Text zone (right of DataMatrix) ---
+    # --- Text zone ---
     text_x = dm_x + dm_size + margin
     text_right = w_px - margin
     text_w = text_right - text_x
-    text_y = margin
+    if text_w < 10:
+        return img
 
-    # Font sizes in px (converted from pt at 203 dpi)
-    fs_name = max(10, int(8 * dpi / 72))
-    fs_body = max(8, int(7 * dpi / 72))
-    fs_small = max(7, int(6 * dpi / 72))
+    # --- EAN-13 zone at bottom (reserve space if barcode present) ---
+    has_ean = bool(barcode_val and len("".join(filter(str.isdigit, str(barcode_val)))) >= 8)
+    ean_h = int(h_px * 0.26) if has_ean else 0
+    ean_digit_h = int(dpi * 6 / 72) if has_ean else 0  # ~6pt for digit line
+    bottom_reserve = ean_h + ean_digit_h + margin if has_ean else 0
 
-    font_name = get_font(fs_name, bold=True)
-    font_body = get_font(fs_body, bold=False)
-    font_small = get_font(fs_small, bold=False)
+    # Available height for text block
+    text_area_h = h_px - margin * 2 - bottom_reserve
 
-    y = text_y
+    # --- Compute font sizes that actually fit ---
+    # Start with target pts and shrink until everything fits
+    def try_layout(fs_name_pt, fs_body_pt, fs_small_pt):
+        fn = get_font(fs_name_pt, bold=True)
+        fb = get_font(fs_body_pt, bold=False)
+        fs = get_font(fs_small_pt, bold=False)
 
-    # 1. Product name (bold, wrapped)
-    if name:
-        lines = wrap_text(name, font_name, text_w, draw)
-        for line in lines[:3]:  # max 3 lines
-            draw.text((text_x, y), line, fill="black", font=font_name)
-            bbox = draw.textbbox((0, 0), line, font=font_name)
-            y += (bbox[3] - bbox[1]) + 1
+        lines_name = wrap_text(name, fn, text_w, draw)[:2] if name else []
+        lines_art = ([f"Арт: {article[:20]}"] if article else [])
+        lines_supp = ([supplier[:25]] if supplier else [])
+
+        # KIZ: show only first ~20 chars + last 6, wrapped
+        kiz_short = kiz[:20] + "..." + kiz[-6:] if len(kiz) > 28 else kiz
+        lines_kiz = wrap_text(kiz_short, fs, text_w, draw)
+
+        total_h = 0
+        lh_name = text_height(draw, "Ag", fn) + 1
+        lh_body = text_height(draw, "Ag", fb) + 1
+        lh_small = text_height(draw, "Ag", fs) + 1
+
+        total_h += len(lines_name) * lh_name + (2 if lines_name else 0)
+        total_h += len(lines_art) * lh_body + (2 if lines_art else 0)
+        total_h += len(lines_supp) * lh_small + (2 if lines_supp else 0)
+        total_h += len(lines_kiz) * lh_small
+
+        return total_h, fn, fb, fs, lines_name, lines_art, lines_supp, lines_kiz, lh_name, lh_body, lh_small
+
+    # Try decreasing font sizes until text fits
+    for fs_name_pt in range(8, 4, -1):
+        fs_body_pt = max(5, fs_name_pt - 1)
+        fs_small_pt = max(4, fs_name_pt - 2)
+        total_h, fn, fb, fs, lines_name, lines_art, lines_supp, lines_kiz, lh_name, lh_body, lh_small = \
+            try_layout(fs_name_pt, fs_body_pt, fs_small_pt)
+        if total_h <= text_area_h:
+            break
+
+    # --- Draw text top-down ---
+    y = margin
+
+    for line in lines_name:
+        draw.text((text_x, y), line, fill="black", font=fn)
+        y += lh_name
+    if lines_name:
         y += 2
 
-    # 2. Article
-    if article:
-        art_text = f"Art: {article}"
-        draw.text((text_x, y), art_text, fill="#222222", font=font_body)
-        bbox = draw.textbbox((0, 0), art_text, font=font_body)
-        y += (bbox[3] - bbox[1]) + 2
+    for line in lines_art:
+        draw.text((text_x, y), line, fill="#1a1a1a", font=fb)
+        y += lh_body
+    if lines_art:
+        y += 2
 
-    # 3. Supplier
-    if supplier:
-        supp_text = supplier[:30]
-        draw.text((text_x, y), supp_text, fill="#444444", font=font_small)
-        bbox = draw.textbbox((0, 0), supp_text, font=font_small)
-        y += (bbox[3] - bbox[1]) + 2
+    for line in lines_supp:
+        draw.text((text_x, y), line, fill="#444444", font=fs)
+        y += lh_small
+    if lines_supp:
+        y += 2
 
-    # 4. Full KIZ (wrapped, small font, grey)
-    kiz_lines = wrap_text(kiz, font_small, text_w, draw)
-    for line in kiz_lines:
-        draw.text((text_x, y), line, fill="#555555", font=font_small)
-        bbox = draw.textbbox((0, 0), line, font=font_small)
-        y += (bbox[3] - bbox[1]) + 1
+    for line in lines_kiz:
+        draw.text((text_x, y), line, fill="#666666", font=fs)
+        y += lh_small
 
-    # 5. EAN-13 barcode at bottom right zone
-    if barcode_val:
+    # --- EAN-13 at bottom ---
+    if has_ean:
         digits = "".join(filter(str.isdigit, str(barcode_val)))
-        if len(digits) >= 8:
+        try:
             ean_img = generate_ean13(barcode_val)
-            # Scale to fit text zone width
-            ean_w = text_w
-            ean_h = max(20, int(h_px * 0.28))
-            ean_img = ean_img.resize((ean_w, ean_h), Image.LANCZOS)
-            ean_y = h_px - ean_h - margin - int(fs_small * 1.3)
+            ean_img = ean_img.resize((text_w, ean_h), Image.LANCZOS)
+            ean_y = h_px - ean_h - ean_digit_h - margin
             img.paste(ean_img, (text_x, ean_y))
-            # Print barcode number below
+            # Digits below barcode
+            fs_digit = get_font(max(4, int(dpi * 5 / 72)), bold=False)
             draw.text(
-                (text_x + ean_w // 2 - len(digits) * fs_small // 4, ean_y + ean_h + 1),
-                digits,
-                fill="black",
-                font=font_small
+                (text_x + text_w // 2 - len(digits) * max(4, int(dpi * 5 / 72)) // 4, ean_y + ean_h + 1),
+                digits, fill="black", font=fs_digit
             )
+        except Exception:
+            pass
 
     return img
 
@@ -176,8 +209,7 @@ def build_pdf(labels_data: list, label_format: str = "58x40 mm (standard)", dpi:
         if not kiz:
             continue
         img = build_label_image(
-            kiz=kiz,
-            label_format=label_format,
+            kiz=kiz, label_format=label_format,
             article=str(item.get("article", "") or ""),
             name=str(item.get("name", "") or ""),
             supplier=str(item.get("supplier", "") or ""),
@@ -211,8 +243,7 @@ def build_pdf_a4(labels_data: list, label_format: str = "58x40 mm (standard)", d
             x = col * w_mm * mm
             y = a4_h - (row + 1) * h_mm * mm
             img = build_label_image(
-                kiz=kiz,
-                label_format=label_format,
+                kiz=kiz, label_format=label_format,
                 article=str(item.get("article", "") or ""),
                 name=str(item.get("name", "") or ""),
                 supplier=str(item.get("supplier", "") or ""),
