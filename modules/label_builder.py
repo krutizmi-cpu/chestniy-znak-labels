@@ -19,7 +19,7 @@ LABEL_FORMATS = {
 
 
 def get_font(size_px: int, bold: bool = False):
-    """Load a Cyrillic-capable font at size_px pixels, fall back to default."""
+    """Load Cyrillic font at size_px pixels."""
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans{}.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-{}.ttf",
@@ -43,31 +43,51 @@ def get_font(size_px: int, bold: bool = False):
 
 
 def _lh(draw, font):
-    """Line height for a font."""
+    """Line height."""
     bbox = draw.textbbox((0, 0), "Ag", font=font)
     return bbox[3] - bbox[1]
 
 
-def _wrap(text, font, max_w, draw, max_lines=None):
-    """Wrap text into lines within max_w pixels; optionally cap at max_lines."""
+def _wrap_text(text, font, max_w, draw):
+    """Wrap text, break long words character-by-character if needed."""
     if not text:
         return []
     words = str(text).split()
-    lines, cur = [], ""
+    lines = []
+    cur = ""
+    
     for word in words:
+        # Try adding word with space
         test = (cur + " " + word).strip()
-        if draw.textbbox((0, 0), test, font=font)[2] <= max_w:
+        test_w = draw.textbbox((0, 0), test, font=font)[2]
+        
+        if test_w <= max_w:
             cur = test
         else:
+            # Word doesn't fit
             if cur:
                 lines.append(cur)
-            cur = word
+                cur = ""
+            
+            # Check if word itself is too long
+            word_w = draw.textbbox((0, 0), word, font=font)[2]
+            if word_w <= max_w:
+                cur = word
+            else:
+                # Break word character by character
+                for char in word:
+                    test_char = cur + char
+                    if draw.textbbox((0, 0), test_char, font=font)[2] <= max_w:
+                        cur = test_char
+                    else:
+                        if cur:
+                            lines.append(cur)
+                        cur = char
+    
     if cur:
         lines.append(cur)
-    result = lines if lines else [str(text)]
-    if max_lines:
-        result = result[:max_lines]
-    return result
+    
+    return lines if lines else [str(text)]
 
 
 def build_label_image(
@@ -80,10 +100,9 @@ def build_label_image(
     dpi: int = 203,
 ) -> Image.Image:
     """
-    Layout:
-      LEFT  (40% w): DataMatrix, vertically centered
-      RIGHT (60% w): name / article / supplier / KIZ short / EAN-13
-    Fonts auto-shrink from 14px down until all text fits.
+    VERTICAL LAYOUT:
+      TOP: DataMatrix (centered, ~50% height)
+      BOTTOM: Name, Article, Supplier, KIZ text, EAN-13 barcode
     """
     w_mm, h_mm = LABEL_FORMATS.get(label_format, (58, 40))
     w_px = int(w_mm * dpi / 25.4)
@@ -93,116 +112,115 @@ def build_label_image(
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, w_px - 1, h_px - 1], outline="black", width=1)
 
-    mg = max(4, int(1.0 * dpi / 25.4))  # ~1 mm margin
+    mg = max(4, int(1.0 * dpi / 25.4))  # ~1mm margin
 
-    # DataMatrix: square, fills 40% width or full height (whichever smaller)
-    dm_max = min(h_px - mg * 2, int(w_px * 0.40) - mg)
-    dm_size = max(dm_max, 20)
+    # --- DataMatrix ZONE (TOP, centered horizontally) ---
+    # Use ~45% of height for DataMatrix
+    dm_zone_h = int(h_px * 0.45)
+    dm_size = min(dm_zone_h - mg, w_px - mg * 2)
+    dm_size = max(dm_size, 20)
+    
     dm_img = generate_datamatrix(kiz, size=max(2, dm_size // 22))
     dm_img = dm_img.resize((dm_size, dm_size), Image.NEAREST)
-    dm_x, dm_y = mg, (h_px - dm_size) // 2
+    dm_x = (w_px - dm_size) // 2  # center horizontally
+    dm_y = mg
     img.paste(dm_img, (dm_x, dm_y))
 
-    # Text zone
-    tx = dm_x + dm_size + mg
-    tw = w_px - tx - mg  # available text width
-    if tw < 8:
-        return img
-
-    # EAN-13 bottom strip
+    # --- TEXT ZONE (BOTTOM) ---
+    text_y_start = dm_y + dm_size + mg
+    text_w = w_px - mg * 2
+    
+    # Check if EAN-13 needed
     digits = "".join(filter(str.isdigit, str(barcode_val or "")))
     has_ean = len(digits) >= 8
-    ean_strip_h = int(h_px * 0.28) if has_ean else 0  # barcode image
-    ean_num_h = 10 if has_ean else 0                   # digit row
-    bottom = ean_strip_h + ean_num_h + mg if has_ean else 0
+    ean_h = int(h_px * 0.20) if has_ean else 0
+    ean_text_h = 8 if has_ean else 0
+    
+    avail_text_h = h_px - text_y_start - mg - ean_h - ean_text_h
 
-    avail_h = h_px - mg * 2 - bottom  # height available for text
-
-    # KIZ abbreviation: first 18 + last 6
-    kiz_s = kiz[:18] + ".." + kiz[-6:] if len(kiz) > 26 else kiz
-    art_s = str(article)[:22] if article else ""
-    sup_s = str(supplier)[:22] if supplier else ""
-    name_s = str(name)[:40] if name else ""
-
-    # Auto-shrink: try font sizes 14..7 px until text fits
+    # Prepare text fields
+    kiz_short = kiz[:18] + ".." + kiz[-6:] if len(kiz) > 26 else kiz
+    
+    # Auto-shrink fonts from 11px down to 6px
     chosen = None
-    for fsize in range(14, 6, -1):
-        fn = get_font(fsize, bold=True)         # name
-        fb = get_font(max(fsize - 2, 6), bold=False)  # body
-        fs = get_font(max(fsize - 3, 5), bold=False)  # small
-
-        lh_n = _lh(draw, fn) + 1
-        lh_b = _lh(draw, fb) + 1
-        lh_s = _lh(draw, fs) + 1
-        gap = 2
-
-        ln_name = _wrap(name_s, fn, tw, draw, max_lines=2)
-        ln_art  = _wrap(f"Арт: {art_s}", fb, tw, draw, max_lines=1) if art_s else []
-        ln_sup  = _wrap(sup_s, fs, tw, draw, max_lines=1) if sup_s else []
-        ln_kiz  = _wrap(kiz_s, fs, tw, draw, max_lines=3)
-
-        total = (
-            len(ln_name) * lh_n + (gap if ln_name else 0) +
-            len(ln_art)  * lh_b + (gap if ln_art  else 0) +
-            len(ln_sup)  * lh_s + (gap if ln_sup  else 0) +
-            len(ln_kiz)  * lh_s
-        )
-        if total <= avail_h:
-            chosen = (fn, fb, fs, lh_n, lh_b, lh_s,
-                      ln_name, ln_art, ln_sup, ln_kiz, gap)
-            break
-
-    # Fallback: smallest size
-    if chosen is None:
-        fsize = 7
+    for fsize in range(11, 5, -1):
         fn = get_font(fsize, bold=True)
-        fb = get_font(max(fsize - 2, 5), bold=False)
-        fs = get_font(max(fsize - 3, 4), bold=False)
+        fb = get_font(max(fsize - 1, 5), bold=False)
+        fs = get_font(max(fsize - 2, 5), bold=False)
+        
         lh_n = _lh(draw, fn) + 1
         lh_b = _lh(draw, fb) + 1
         lh_s = _lh(draw, fs) + 1
-        gap = 1
-        ln_name = _wrap(name_s, fn, tw, draw, max_lines=2)
-        ln_art  = _wrap(f"Арт: {art_s}", fb, tw, draw, max_lines=1) if art_s else []
-        ln_sup  = _wrap(sup_s, fs, tw, draw, max_lines=1) if sup_s else []
-        ln_kiz  = _wrap(kiz_s, fs, tw, draw, max_lines=3)
-        chosen = (fn, fb, fs, lh_n, lh_b, lh_s,
-                  ln_name, ln_art, ln_sup, ln_kiz, gap)
+        
+        ln_name = _wrap_text(name[:50] if name else "", fn, text_w, draw)[:2]
+        ln_art = [f"Арт: {article[:25]}"] if article else []
+        ln_sup = [f"Пост: {supplier[:25]}"] if supplier else []
+        ln_kiz = _wrap_text(kiz_short, fs, text_w, draw)[:2]
+        
+        total_h = (
+            len(ln_name) * lh_n + (2 if ln_name else 0) +
+            len(ln_art) * lh_b + (1 if ln_art else 0) +
+            len(ln_sup) * lh_s + (1 if ln_sup else 0) +
+            len(ln_kiz) * lh_s
+        )
+        
+        if total_h <= avail_text_h:
+            chosen = (fn, fb, fs, lh_n, lh_b, lh_s, ln_name, ln_art, ln_sup, ln_kiz)
+            break
+    
+    # Fallback smallest
+    if not chosen:
+        fsize = 6
+        fn = get_font(fsize, bold=True)
+        fb = get_font(5, bold=False)
+        fs = get_font(5, bold=False)
+        lh_n = _lh(draw, fn) + 1
+        lh_b = _lh(draw, fb) + 1
+        lh_s = _lh(draw, fs) + 1
+        ln_name = _wrap_text(name[:50] if name else "", fn, text_w, draw)[:2]
+        ln_art = [f"Арт: {article[:25]}"] if article else []
+        ln_sup = [f"Пост: {supplier[:25]}"] if supplier else []
+        ln_kiz = _wrap_text(kiz_short, fs, text_w, draw)[:2]
+        chosen = (fn, fb, fs, lh_n, lh_b, lh_s, ln_name, ln_art, ln_sup, ln_kiz)
+    
+    fn, fb, fs, lh_n, lh_b, lh_s, ln_name, ln_art, ln_sup, ln_kiz = chosen
 
-    fn, fb, fs, lh_n, lh_b, lh_s, ln_name, ln_art, ln_sup, ln_kiz, gap = chosen
-
-    # Draw text, clipping to avail_h
-    y = mg
-    clip_y = mg + avail_h
-
-    def draw_lines(lines, font, lh, color):
-        nonlocal y
-        for line in lines:
-            if y + lh > clip_y:
-                break
-            draw.text((tx, y), line, fill=color, font=font)
-            y += lh
-
-    draw_lines(ln_name, fn, lh_n, "#000000")
+    # Draw text from top to bottom
+    y = text_y_start
+    tx = mg
+    
+    for line in ln_name:
+        draw.text((tx, y), line, fill="#000000", font=fn)
+        y += lh_n
     if ln_name:
-        y += gap
-    draw_lines(ln_art, fb, lh_b, "#222222")
+        y += 2
+    
+    for line in ln_art:
+        draw.text((tx, y), line, fill="#222222", font=fb)
+        y += lh_b
     if ln_art:
-        y += gap
-    draw_lines(ln_sup, fs, lh_s, "#444444")
+        y += 1
+    
+    for line in ln_sup:
+        draw.text((tx, y), line, fill="#444444", font=fs)
+        y += lh_s
     if ln_sup:
-        y += gap
-    draw_lines(ln_kiz, fs, lh_s, "#666666")
+        y += 1
+    
+    for line in ln_kiz:
+        draw.text((tx, y), line, fill="#666666", font=fs)
+        y += lh_s
 
-    # EAN-13 barcode strip at bottom
+    # EAN-13 at bottom
     if has_ean:
         try:
             ean_img = generate_ean13(barcode_val)
-            ean_img = ean_img.resize((tw, ean_strip_h), Image.LANCZOS)
-            ey = h_px - ean_strip_h - ean_num_h - mg
-            img.paste(ean_img, (tx, ey))
-            fs_d = get_font(max(5, int(dpi * 4.5 / 72)), bold=False)
-            draw.text((tx, ey + ean_strip_h + 1), digits, fill="black", font=fs_d)
+            ean_w = w_px - mg * 2
+            ean_img = ean_img.resize((ean_w, ean_h), Image.LANCZOS)
+            ean_y = h_px - ean_h - ean_text_h - mg
+            img.paste(ean_img, (mg, ean_y))
+            fs_d = get_font(6, bold=False)
+            draw.text((mg + ean_w // 2 - len(digits) * 3, ean_y + ean_h + 1), digits, fill="black", font=fs_d)
         except Exception:
             pass
 
