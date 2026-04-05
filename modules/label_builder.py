@@ -205,11 +205,15 @@ def build_label_image(
         cap_w, cap_h = _text_size(draw, caption, font_small)
         draw.text((right_x + max(0, (dm_size - cap_w) // 2), caption_y), caption, fill="#444444", font=font_small)
 
-        # Bottom zone: barcode on left, service block on right
+        # Bottom zone: KIZ label above barcode on left, service block on right
         bottom_y = mg + int(content_h * 0.66)
         barcode_zone_w = int(content_w * 0.62)
         right_zone_x = mg + barcode_zone_w + gap
         right_zone_w = content_w - barcode_zone_w - gap
+
+        kiz_title = "Код маркировки (КИЗ)"
+        _, title_h = _text_size(draw, kiz_title, font_small)
+        draw.text((mg, bottom_y - title_h - 2), kiz_title, fill="#444444", font=font_small)
 
         digits = "".join(filter(str.isdigit, str(barcode_val or "")))
         if len(digits) >= 8:
