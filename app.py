@@ -99,6 +99,13 @@ with tab2:
         single_kiz = st.text_input("Код маркировки (КИЗ) *", placeholder="01...21...")
         single_art = st.text_input("Артикул")
         single_name = st.text_input("Название")
+        single_brand = st.text_input("Бренд")
+        single_size = st.text_input("Размер")
+        single_color = st.text_input("Цвет")
+        single_composition = st.text_input("Состав")
+        single_manufacturer = st.text_input("Изготовитель")
+        single_country = st.text_input("Страна происхождения")
+        single_care = st.text_input("Уход")
         single_supp = st.text_input("Поставщик")
         single_bc = st.text_input("Штрихкод (EAN-13)")
         
@@ -120,13 +127,33 @@ with tab2:
                     label_format=label_format,
                     article=single_art,
                     name=single_name,
+                    brand=single_brand,
+                    size_value=single_size,
+                    color=single_color,
+                    composition=single_composition,
+                    manufacturer=single_manufacturer,
+                    country=single_country,
+                    care=single_care,
                     supplier=single_supp,
                     barcode_val=single_bc
                 )
                 st.image(img, caption="Так будет выглядеть этикетка", use_container_width=True)
                 
                 # Скачивание одной штуки
-                single_pdf = build_pdf([{"kiz": single_kiz, "article": single_art, "name": single_name, "supplier": single_supp, "barcode_val": single_bc}], label_format=label_format)
+                single_pdf = build_pdf([{
+                    "kiz": single_kiz,
+                    "article": single_art,
+                    "name": single_name,
+                    "brand": single_brand,
+                    "size": single_size,
+                    "color": single_color,
+                    "composition": single_composition,
+                    "manufacturer": single_manufacturer,
+                    "country": single_country,
+                    "care": single_care,
+                    "supplier": single_supp,
+                    "barcode_val": single_bc,
+                }], label_format=label_format)
                 st.download_button("💾 Скачать одну этикетку (PDF)", single_pdf, "single_label.pdf", "application/pdf")
             except Exception as e:
                 st.error(f"Ошибка генерации: {e}")

@@ -6,6 +6,13 @@ TEMPLATE_COLUMNS = {
     "kiz": "Код маркировки (КИЗ) *",
     "article": "Артикул",
     "name": "Название товара",
+    "brand": "Бренд",
+    "size": "Размер",
+    "color": "Цвет",
+    "composition": "Состав",
+    "manufacturer": "Изготовитель",
+    "country": "Страна происхождения",
+    "care": "Уход",
     "supplier": "Поставщик",
     "barcode_val": "Штрихкод",
 }
@@ -20,7 +27,14 @@ def create_template() -> bytes:
         {
             TEMPLATE_COLUMNS["kiz"]: "010468009156625621ebxoQTHDf+mf)",
             TEMPLATE_COLUMNS["article"]: "ART-001",
-            TEMPLATE_COLUMNS["name"]: "Велосипед STELS Avangard 300",
+            TEMPLATE_COLUMNS["name"]: "Платье детское трикотажное",
+            TEMPLATE_COLUMNS["brand"]: "UNION LABEL",
+            TEMPLATE_COLUMNS["size"]: "116",
+            TEMPLATE_COLUMNS["color"]: "Розовый",
+            TEMPLATE_COLUMNS["composition"]: "100% хлопок",
+            TEMPLATE_COLUMNS["manufacturer"]: "ООО Тест",
+            TEMPLATE_COLUMNS["country"]: "Россия",
+            TEMPLATE_COLUMNS["care"]: "Стирка 30°C, не отбеливать",
             TEMPLATE_COLUMNS["supplier"]: "ООО Тест",
             TEMPLATE_COLUMNS["barcode_val"]: "4680091566256",
         },
@@ -62,7 +76,7 @@ def create_template() -> bytes:
         })
 
         # Ширина столбцов
-        col_widths = [50, 15, 40, 30, 20]
+        col_widths = [50, 15, 34, 18, 12, 16, 24, 24, 18, 26, 20]
         for col_idx, (col_name, width) in enumerate(zip(df.columns, col_widths)):
             worksheet.set_column(col_idx, col_idx, width)
             worksheet.write(0, col_idx, col_name, header_format)
@@ -72,8 +86,8 @@ def create_template() -> bytes:
 
         # Пример данных
         worksheet.write(1, 0, sample_data[0][TEMPLATE_COLUMNS["kiz"]], required_format)
-        for col_idx in range(1, 5):
-            vals = list(sample_data[0].values())
+        vals = list(sample_data[0].values())
+        for col_idx in range(1, len(vals)):
             worksheet.write(1, col_idx, vals[col_idx], optional_format)
 
         # Примечание
@@ -117,6 +131,20 @@ def read_excel(file) -> pd.DataFrame:
             rename[col] = "article"
         elif "наз" in col_lower:
             rename[col] = "name"
+        elif "бренд" in col_lower or "brand" in col_lower:
+            rename[col] = "brand"
+        elif "размер" in col_lower or col_lower == "size":
+            rename[col] = "size"
+        elif "цвет" in col_lower or col_lower == "color":
+            rename[col] = "color"
+        elif "состав" in col_lower or "composition" in col_lower:
+            rename[col] = "composition"
+        elif "изготов" in col_lower or "manufacturer" in col_lower:
+            rename[col] = "manufacturer"
+        elif "страна" in col_lower or "country" in col_lower:
+            rename[col] = "country"
+        elif "уход" in col_lower or "care" in col_lower:
+            rename[col] = "care"
         elif "пост" in col_lower:
             rename[col] = "supplier"
         elif "штрих" in col_lower or "barcode" in col_lower:
@@ -130,7 +158,7 @@ def read_excel(file) -> pd.DataFrame:
                         "Проверьте формат файла и названия столбцов.")
 
     # Добавляем опциональные колонки если отсутствуют
-    for col in ["article", "name", "supplier", "barcode_val"]:
+    for col in ["article", "name", "brand", "size", "color", "composition", "manufacturer", "country", "care", "supplier", "barcode_val"]:
         if col not in df.columns:
             df[col] = ""
 

@@ -99,105 +99,193 @@ def build_label_image(
     label_format: str = "58x40 mm (standard)",
     article: str = "",
     name: str = "",
+    brand: str = "",
+    size_value: str = "",
+    color: str = "",
+    composition: str = "",
+    manufacturer: str = "",
+    country: str = "",
+    care: str = "",
     supplier: str = "",
     barcode_val: str = "",
     dpi: int = 203,
 ) -> Image.Image:
     """
-    FULLY VERTICAL layout (stacked top to bottom):
-    1. Name (bold)
-    2. Article
-    3. Supplier  
-    4. DataMatrix code
-    5. KIZ code
-    6. EAN-13 barcode
+    Balanced label layout.
+
+    For compact formats like 58x40 we use a split layout:
+    - left: name/article/supplier
+    - right: DataMatrix
+    - bottom: short KIZ + EAN13
+
+    For larger formats we keep a spacious vertical layout.
     """
     w_mm, h_mm = LABEL_FORMATS.get(label_format, (58, 40))
     w_px = int(w_mm * dpi / 25.4)
     h_px = int(h_mm * dpi / 25.4)
-    
+
     img = Image.new("RGB", (w_px, h_px), "white")
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, w_px - 1, h_px - 1], outline="black", width=1)
-    
-    mg = max(4, int(0.8 * dpi / 25.4))  # ~0.8mm margin
-    full_w = w_px - mg * 2
-    
-    # Font sizes
-    fs_name = max(6, int(7 * dpi / 72))     # название
-    fs_body = max(5, int(6 * dpi / 72))     # артикул/поставщик
-    fs_small = max(4, int(4 * dpi / 72))    # КИЗ
-    
-    font_name = get_font(fs_name, bold=True)
+
+    mg = max(4, int(0.8 * dpi / 25.4))
+    content_w = w_px - mg * 2
+    content_h = h_px - mg * 2
+
+    compact_layout = (w_mm <= 60 and h_mm <= 45)
+
+    fs_name = max(7, int(7 * dpi / 72))
+    fs_body = max(5, int(5.5 * dpi / 72))
+    fs_small = max(4, int(4 * dpi / 72))
+    fs_digits = max(4, int(4 * dpi / 72))
+
+    font_name = get_font(fs_name, bold=False)
     font_body = get_font(fs_body, bold=False)
     font_small = get_font(fs_small, bold=False)
-    
+    font_digits = get_font(fs_digits, bold=False)
+
+    if compact_layout:
+        gap = max(6, int(1.0 * dpi / 25.4))
+        dm_size = min(max(int(content_h * 0.40), 70), int(content_w * 0.34))
+        dm_size = max(dm_size, 62)
+
+        left_w = content_w - dm_size - gap
+        top_y = mg
+        left_x = mg
+        right_x = mg + left_w + gap
+
+        y = top_y
+        if name:
+            name_lines = _wrap_text(name, font_name, left_w, draw, max_lines=2)
+            for line in name_lines:
+                draw.text((left_x, y), line, fill="#000000", font=font_name)
+                _, lh = _text_size(draw, line, font_name)
+                y += lh + 1
+            y += 2
+
+        if article:
+            art_text = f"Арт: {article}"
+            for line in _wrap_text(art_text, font_body, left_w, draw, max_lines=1):
+                draw.text((left_x, y), line, fill="#222222", font=font_body)
+                _, lh = _text_size(draw, line, font_body)
+                y += lh + 1
+            y += 1
+
+        meta_parts = []
+        if size_value:
+            meta_parts.append(f"Размер: {size_value}")
+        if color:
+            meta_parts.append(f"Цвет: {color}")
+        if composition:
+            meta_parts.append(f"Состав: {composition}")
+        if country:
+            meta_parts.append(f"Страна: {country}")
+        if care:
+            meta_parts.append(f"Уход: {care}")
+        for meta in meta_parts[:5]:
+            for line in _wrap_text(meta, font_body, left_w, draw, max_lines=1):
+                draw.text((left_x, y), line, fill="#444444", font=font_body)
+                _, lh = _text_size(draw, line, font_body)
+                y += lh + 1
+        maker = manufacturer or supplier
+        if maker:
+            for line in _wrap_text(maker, font_small, left_w, draw, max_lines=1):
+                draw.text((left_x, y), line, fill="#666666", font=font_small)
+                _, lh = _text_size(draw, line, font_small)
+                y += lh + 1
+
+        dm_module = max(2, dm_size // 22)
+        dm_img = generate_datamatrix(kiz, size=dm_module)
+        dm_img = dm_img.resize((dm_size, dm_size), Image.NEAREST)
+        img.paste(dm_img, (right_x, top_y))
+
+        # short honest sign code directly under DataMatrix
+        caption_y = top_y + dm_size + 2
+        caption = "КИЗ"
+        cap_w, cap_h = _text_size(draw, caption, font_small)
+        draw.text((right_x + max(0, (dm_size - cap_w) // 2), caption_y), caption, fill="#444444", font=font_small)
+
+        # Bottom zone: barcode on left, service block on right
+        bottom_y = mg + int(content_h * 0.66)
+        barcode_zone_w = int(content_w * 0.62)
+        right_zone_x = mg + barcode_zone_w + gap
+        right_zone_w = content_w - barcode_zone_w - gap
+
+        digits = "".join(filter(str.isdigit, str(barcode_val or "")))
+        if len(digits) >= 8:
+            try:
+                ean_img = generate_ean13(barcode_val)
+                ean_h = min(max(int(content_h * 0.16), 24), 30)
+                ean_img = ean_img.resize((barcode_zone_w, ean_h), Image.LANCZOS)
+                img.paste(ean_img, (mg, bottom_y))
+                draw.rectangle([mg-1, bottom_y-1, mg + barcode_zone_w + 1, bottom_y + ean_h + 14], outline="#000000", width=1)
+                txt_w, txt_h = _text_size(draw, digits, font_digits)
+                draw.text((mg + (barcode_zone_w - txt_w) // 2, bottom_y + ean_h + 1), digits, fill="black", font=font_digits)
+            except Exception:
+                pass
+
+        service_lines = ["ЧЕСТНЫЙ", "ЗНАК", "EAC"]
+        ky = bottom_y + 2
+        for line in service_lines:
+            txt_w, txt_h = _text_size(draw, line, font_small)
+            draw.text((right_zone_x + max(0, (right_zone_w - txt_w)//2), ky), line, fill="#555555", font=font_small)
+            ky += txt_h + 1
+        return img
+
+    # spacious vertical layout for larger labels
     y = mg
-    
-    # 1. NAME (top, bold, 1-2 lines)
     if name:
-        name_lines = _wrap_text(name, font_name, full_w, draw, max_lines=2)
+        name_lines = _wrap_text(name, font_name, content_w, draw, max_lines=2)
         for line in name_lines:
             draw.text((mg, y), line, fill="#000000", font=font_name)
             _, lh = _text_size(draw, line, font_name)
             y += lh + 1
         y += 2
-    
-    # 2. ARTICLE
+
     if article:
         art_text = f"Арт: {article}"
-        art_lines = _wrap_text(art_text, font_body, full_w, draw, max_lines=1)
-        for line in art_lines:
+        for line in _wrap_text(art_text, font_body, content_w, draw, max_lines=1):
             draw.text((mg, y), line, fill="#222222", font=font_body)
             _, lh = _text_size(draw, line, font_body)
             y += lh + 1
         y += 1
-    
-    # 3. SUPPLIER
+
     if supplier:
-        supp_lines = _wrap_text(supplier, font_body, full_w, draw, max_lines=2)
-        for line in supp_lines:
+        for line in _wrap_text(supplier, font_body, content_w, draw, max_lines=2):
             draw.text((mg, y), line, fill="#444444", font=font_body)
             _, lh = _text_size(draw, line, font_body)
             y += lh + 1
         y += 2
-    
-    # 4. DATAMATRIX (centered, square)
-    dm_size = min(int(full_w * 0.5), 80)  # max 80px square
+
+    dm_size = min(int(content_w * 0.5), 80)
     dm_size = max(dm_size, 40)
     dm_module = max(2, dm_size // 22)
     dm_img = generate_datamatrix(kiz, size=dm_module)
     dm_img = dm_img.resize((dm_size, dm_size), Image.NEAREST)
-    
-    dm_x = mg + (full_w - dm_size) // 2  # center horizontally
+    dm_x = mg + (content_w - dm_size) // 2
     img.paste(dm_img, (dm_x, y))
     y += dm_size + 3
-    
-    # 5. KIZ CODE (small, abbreviated)
+
     kiz_short = kiz[:18] + ".." + kiz[-6:] if len(kiz) > 26 else kiz
-    kiz_lines = _wrap_text(kiz_short, font_small, full_w, draw, max_lines=2)
-    for line in kiz_lines:
+    for line in _wrap_text(kiz_short, font_small, content_w, draw, max_lines=2):
         draw.text((mg, y), line, fill="#666666", font=font_small)
         _, lh = _text_size(draw, line, font_small)
         y += lh + 1
     y += 2
-    
-    # 6. EAN-13 BARCODE (bottom)
+
     digits = "".join(filter(str.isdigit, str(barcode_val or "")))
     if len(digits) >= 8:
         try:
             ean_img = generate_ean13(barcode_val)
-            ean_h = min(int(h_px * 0.18), 35)  # max 35px height
-            ean_img = ean_img.resize((full_w, ean_h), Image.LANCZOS)
+            ean_h = min(int(h_px * 0.18), 35)
+            ean_img = ean_img.resize((content_w, ean_h), Image.LANCZOS)
             img.paste(ean_img, (mg, y))
             y += ean_h + 2
-            # Barcode digits
-            fs_dig = get_font(max(3, int(3 * dpi / 72)), bold=False)
-            txt_w, _ = _text_size(draw, digits, fs_dig)
-            draw.text((mg + (full_w - txt_w) // 2, y), digits, fill="black", font=fs_dig)
+            txt_w, _ = _text_size(draw, digits, font_digits)
+            draw.text((mg + (content_w - txt_w) // 2, y), digits, fill="black", font=font_digits)
         except Exception:
             pass
-    
+
     return img
 
 def build_pdf(labels_data: list, label_format: str = "58x40 mm (standard)", dpi: int = 203) -> bytes:
@@ -214,6 +302,13 @@ def build_pdf(labels_data: list, label_format: str = "58x40 mm (standard)", dpi:
             label_format=label_format,
             article=str(item.get("article", "") or ""),
             name=str(item.get("name", "") or ""),
+            brand=str(item.get("brand", "") or ""),
+            size_value=str(item.get("size", "") or ""),
+            color=str(item.get("color", "") or ""),
+            composition=str(item.get("composition", "") or ""),
+            manufacturer=str(item.get("manufacturer", "") or ""),
+            country=str(item.get("country", "") or ""),
+            care=str(item.get("care", "") or ""),
             supplier=str(item.get("supplier", "") or ""),
             barcode_val=str(item.get("barcode_val", "") or ""),
             dpi=dpi,
