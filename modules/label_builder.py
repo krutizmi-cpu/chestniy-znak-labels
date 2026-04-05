@@ -224,12 +224,11 @@ def build_label_image(
             except Exception:
                 pass
 
-        service_lines = ["ЧЕСТНЫЙ", "ЗНАК", "EAC"]
-        ky = bottom_y + 2
-        for line in service_lines:
-            txt_w, txt_h = _text_size(draw, line, font_small)
-            draw.text((right_zone_x + max(0, (right_zone_w - txt_w)//2), ky), line, fill="#555555", font=font_small)
-            ky += txt_h + 1
+        eac = "EAC"
+        txt_w, txt_h = _text_size(draw, eac, font_small)
+        eac_x = right_zone_x + max(0, right_zone_w - txt_w)
+        eac_y = h_px - mg - txt_h
+        draw.text((eac_x, eac_y), eac, fill="#555555", font=font_small)
         return img
 
     # spacious vertical layout for larger labels
