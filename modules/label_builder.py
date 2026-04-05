@@ -201,19 +201,20 @@ def build_label_image(
 
         # short honest sign code directly under DataMatrix
         caption_y = top_y + dm_size + 2
-        caption = kiz[:18] + ".." + kiz[-6:] if len(kiz) > 26 else kiz
-        cap_w, cap_h = _text_size(draw, caption, font_small)
-        draw.text((right_x + max(0, (dm_size - cap_w) // 2), caption_y), caption, fill="#444444", font=font_small)
+        caption = kiz
+        caption_lines = _wrap_text(caption, get_font(max(3, int(3 * dpi / 72)), bold=False), dm_size, draw, max_lines=2)
+        tiny_font = get_font(max(3, int(3 * dpi / 72)), bold=False)
+        cy = caption_y
+        for line in caption_lines:
+            cap_w, cap_h = _text_size(draw, line, tiny_font)
+            draw.text((right_x + max(0, (dm_size - cap_w) // 2), cy), line, fill="#444444", font=tiny_font)
+            cy += cap_h + 1
 
         # Bottom zone: KIZ label above barcode on left, service block on right
         bottom_y = mg + int(content_h * 0.66)
         barcode_zone_w = int(content_w * 0.62)
         right_zone_x = mg + barcode_zone_w + gap
         right_zone_w = content_w - barcode_zone_w - gap
-
-        kiz_title = "Код маркировки (КИЗ)"
-        _, title_h = _text_size(draw, kiz_title, font_small)
-        draw.text((mg, bottom_y - title_h - 2), kiz_title, fill="#444444", font=font_small)
 
         digits = "".join(filter(str.isdigit, str(barcode_val or "")))
         if len(digits) >= 8:
